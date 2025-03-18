@@ -9,6 +9,7 @@ By Jakub Grabowski
 #include <stdlib.h>
 
 #define BUFSIZE 256
+#define MAXGRAY 255
 
 typedef struct {
     unsigned char r, g, b;
@@ -30,6 +31,55 @@ unsigned char ppm_to_pgm_weighted(Pixel* pixel) {
     double wr = 0.299, wg = 0.587, wb = 0.114; // weights sum up to 1, no division necessary 
     double wsum = wr * pixel->r + wg * pixel->g + wb * pixel->b;
     return (unsigned char) wsum;
+}
+
+void histogram_transform(int width, int height, unsigned char* grayscale) {
+    // create a histogram
+    // MAXGRAY+1 because there are bytes of MAXGRAY value (e.g. 256 values)
+    int* hist = (int*)calloc(MAXGRAY+1, sizeof(int));
+    // TODO: handle calloc error
+    int gmin = 0;
+    for (int j = 0; j < height; j++) {
+        for (int i = 0; i < width; i++) {
+            unsigned char val = grayscale[j * width + i];
+            hist[val]++;
+            // compute min. value
+            if (hist[val] > gmin) {
+                gmin = hist[val];
+            }
+        }
+    }
+
+    // compute c.img histogram
+    int* histc = (int*)malloc((MAXGRAY+1) * sizeof(int));
+    // TODO: handle malloc error
+    histc[0] = 0;
+    for (int i = 1; i < MAXGRAY+1; i++) {
+        histc[i] = histc[i-1] + hist[i];
+    }
+    int hmin = histc[gmin];
+    free(hist);
+
+    // compute T values
+    int* tvals = (int*)malloc((MAXGRAY+1) * sizeof(int));
+    for (int i = 1; i < MAXGRAY+1; i++) {
+        // TODO: round
+        tvals[i] = MAXGRAY * (histc[i] - hmin) / (width * height - hmin);
+    }
+    free(histc);
+
+    // rewrite grayscale
+    for (int j = 0; j < height; j++) {
+        for (int i = 0; i < width; i++) {
+            unsigned char val = grayscale[j * width + i];
+            grayscale[j * width + i] = tvals[val];
+        }
+    }
+    free(tvals);
+}
+
+void gamma_transform(int width, int height, unsigned char* grayscale) {
+    
 }
 
 // args: $1: file to convert, $2: file to save the results to
@@ -85,7 +135,7 @@ int main(int argc, char const *argv[]) {
         error_handler(src, tgt, "Invalid max color value.");
     }
 
-    if (max_val > 255) {
+    if (max_val > MAXGRAY) {
         error_handler(src, tgt, "Unsupported max value > 255.");
     }
 
@@ -102,6 +152,7 @@ int main(int argc, char const *argv[]) {
         printf("Bytes read %ld. Supposed to be %d.", bytes_read, width * height);
         error_handler(src, tgt, "Unexpected end of file (4).");
     }
+    fclose(src);
 
     // write header to target file
     fprintf(tgt, "P5\n%d %d\n255\n", width, height);
@@ -119,12 +170,14 @@ int main(int argc, char const *argv[]) {
             grayscale[j * width + i] = ppm_to_pgm_weighted(&pixels[j * width + i]); // weighted avg
         }
     }
-    
-    fwrite(grayscale, sizeof(unsigned char), width * height, tgt);
-
     free(pixels);
+    
+    // transform grayscale with histogram
+    histogram_transform(width, height, grayscale);
+
+    fwrite(grayscale, sizeof(unsigned char), width * height, tgt);
     free(grayscale);
-    fclose(src);
+
     fclose(tgt);
     printf("File converted successfully.\n");
     return 0;
