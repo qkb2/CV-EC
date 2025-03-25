@@ -12,6 +12,7 @@ By Jakub Grabowski
 #define BUFSIZE 256
 #define MAXGRAY 255
 #define MAXSIZE MAXGRAY+1
+#define KSIZE 3
 
 typedef struct {
     unsigned char r, g, b;
@@ -86,6 +87,36 @@ void gamma_transform(int size, unsigned char* grayscale, double gamma) {
 
     for (int i = 0; i < size; i++) {
         grayscale[i] = lookup[grayscale[i]];
+    }
+}
+
+unsigned char get_safe_gval(int width, int height, int i, int j, unsigned char* grayscale) {
+    if (i == 0 || j == 0 || i == width-1 || j == height-1) {
+        return 0;
+    }
+    return grayscale[j * width + i];
+}
+
+void convolve_3x3(
+    int width, 
+    int height, 
+    unsigned char* grayscale, 
+    unsigned char* new_grayscale,
+    double* kernel) {
+    const double magic_const = MAXGRAY / (KSIZE * KSIZE);
+    for (int j = 0; j < height; j++) {
+        for (int i = 0; i < width; i++) {
+            double acc = 0;
+            for (int jj = 0; jj < KSIZE; jj++) {
+                for (int ii = 0; ii < KSIZE; ii++) {
+                    double kval = kernel[jj * KSIZE + ii];
+                    unsigned char gval = get_safe_gval(width, height, i, j, grayscale);
+                    acc += kval * gval / MAXGRAY;
+                }
+            }
+            double avg_acc = acc * magic_const;
+            new_grayscale[j * width + i] = (unsigned char)avg_acc;
+        }
     }
 }
 
@@ -186,6 +217,8 @@ int main(int argc, char const *argv[]) {
     histogram_transform(size, grayscale);
     // transform grayscale with gamma correction
     gamma_transform(size, grayscale, 2.0);
+
+    const double* const kernel = {0};
 
     fwrite(grayscale, sizeof(unsigned char), size, tgt);
     free(grayscale);
