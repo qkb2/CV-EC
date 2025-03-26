@@ -91,31 +91,29 @@ void gamma_transform(int size, unsigned char* grayscale, double gamma) {
 }
 
 unsigned char get_safe_gval(int width, int height, int i, int j, unsigned char* grayscale) {
-    if (i == 0 || j == 0 || i == width-1 || j == height-1) {
+    if (i <= 0 || j <= 0 || i >= width-1 || j >= height-1) {
         return 0;
     }
     return grayscale[j * width + i];
 }
 
-void convolve_3x3(
-    int width, 
-    int height, 
-    unsigned char* grayscale, 
-    unsigned char* new_grayscale,
-    double* kernel) {
-    const double magic_const = MAXGRAY / (KSIZE * KSIZE);
+unsigned char* convolve_3x3(
+    int width, int height, unsigned char* grayscale, unsigned char* new_grayscale, double* kernel) {
     for (int j = 0; j < height; j++) {
         for (int i = 0; i < width; i++) {
             double acc = 0;
             for (int jj = 0; jj < KSIZE; jj++) {
                 for (int ii = 0; ii < KSIZE; ii++) {
+                    int ni = i + ii - 1;  // offset by kernel center
+                    int nj = j + jj - 1;
+
                     double kval = kernel[jj * KSIZE + ii];
-                    unsigned char gval = get_safe_gval(width, height, i, j, grayscale);
-                    acc += kval * gval / MAXGRAY;
+                    unsigned char gval = get_safe_gval(width, height, ni, nj, grayscale);
+
+                    acc += kval * gval;
                 }
             }
-            double avg_acc = acc * magic_const;
-            new_grayscale[j * width + i] = (unsigned char)avg_acc;
+            new_grayscale[j * width + i] = (unsigned char)round(acc);
         }
     }
 }
@@ -218,10 +216,24 @@ int main(int argc, char const *argv[]) {
     // transform grayscale with gamma correction
     gamma_transform(size, grayscale, 2.0);
 
-    const double* const kernel = {0};
+    // example approx. gaussian filter - can be changed to be any other 3x3 kernel
+    double kernel[KSIZE * KSIZE] = {
+        0.0625, 0.125,  0.0625, 
+        0.125,  0.25,   0.125,
+        0.0625, 0.125,  0.0625
+    };
 
-    fwrite(grayscale, sizeof(unsigned char), size, tgt);
+    unsigned char* new_grayscale = (unsigned char*)malloc(size);
+    if (!new_grayscale) {
+        free(pixels);
+        error_handler(src, tgt, "Memory allocation failed for grayscale data manipulation.");
+    }
+    
+    convolve_3x3(width, height, grayscale, new_grayscale, kernel);
+
     free(grayscale);
+    fwrite(new_grayscale, sizeof(unsigned char), size, tgt);
+    free(new_grayscale);
 
     fclose(tgt);
     printf("File converted successfully.\n");
