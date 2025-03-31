@@ -20,9 +20,16 @@ typedef struct {
 
 void error_handler(FILE* src, FILE* tgt, char* msg) {
     printf("%s", msg);
-    fclose(src);
-    fclose(tgt);
+    if (src) fclose(src);
+    if (tgt) fclose(tgt);
     exit(EXIT_FAILURE);
+}
+
+unsigned char round_clamp(double x) {
+    double xm = round(x);
+    if (x > 255) return 255;
+    if (x < 0) return 0;
+    return (unsigned char)x;
 }
 
 unsigned char ppm_to_pgm_avg(Pixel* pixel) {
@@ -33,7 +40,7 @@ unsigned char ppm_to_pgm_weighted(Pixel* pixel) {
     // magic numbers
     double wr = 0.299, wg = 0.587, wb = 0.114; // weights sum up to 1, no division necessary 
     double wsum = wr * pixel->r + wg * pixel->g + wb * pixel->b;
-    return (unsigned char) wsum;
+    return round_clamp(wsum);
 }
 
 void histogram_transform(int size, unsigned char* grayscale) {
@@ -67,7 +74,7 @@ void histogram_transform(int size, unsigned char* grayscale) {
     for (int i = 1; i < MAXSIZE; i++) {
         // happy casting
         double val = MAXGRAY * ((double)(histc[i] - hmin) / (size - hmin));
-        tvals[i] = (unsigned char)round(val);
+        tvals[i] = round_clamp(val);
     }
 
     // rewrite grayscale
@@ -82,7 +89,7 @@ void gamma_transform(int size, unsigned char* grayscale, double gamma) {
     unsigned char lookup[MAXSIZE] = {0};
     for (int i = 0; i < MAXSIZE; i++) {
         double val = (double) i / MAXGRAY;
-        lookup[i] = (unsigned char)(MAXGRAY * pow(val, gamma));
+        lookup[i] = round_clamp(MAXGRAY * pow(val, gamma));
     }
 
     for (int i = 0; i < size; i++) {
@@ -91,10 +98,13 @@ void gamma_transform(int size, unsigned char* grayscale, double gamma) {
 }
 
 unsigned char get_safe_gval(int width, int height, int i, int j, unsigned char* grayscale) {
-    if (i <= 0 || j <= 0 || i >= width-1 || j >= height-1) {
-        return 0;
-    }
-    return grayscale[j * width + i];
+    // to avoid darkening on the edges, return nearest actual pixel from the img
+    int ii = i, jj = j;
+    if (i < 0) ii = 0;
+    if (j < 0) jj = 0;
+    if (i >= width) ii = width - 1;
+    if (j >= height) jj = height - 1;
+    return grayscale[jj * width + ii];
 }
 
 unsigned char* convolve_3x3(
@@ -113,7 +123,7 @@ unsigned char* convolve_3x3(
                     acc += kval * gval;
                 }
             }
-            new_grayscale[j * width + i] = (unsigned char)round(acc);
+            new_grayscale[j * width + i] = round_clamp(acc);
         }
     }
 }
@@ -218,14 +228,15 @@ int main(int argc, char const *argv[]) {
 
     // example approx. gaussian filter - can be changed to be any other 3x3 kernel
     double kernel[KSIZE * KSIZE] = {
-        0.0625, 0.125,  0.0625, 
-        0.125,  0.25,   0.125,
-        0.0625, 0.125,  0.0625
+        1.0 / 16, 2.0 / 16, 1.0 / 16,
+        2.0 / 16, 4.0 / 16, 2.0 / 16,
+        1.0 / 16, 2.0 / 16, 1.0 / 16
     };
 
     unsigned char* new_grayscale = (unsigned char*)malloc(size);
     if (!new_grayscale) {
         free(pixels);
+        free(new_grayscale);
         error_handler(src, tgt, "Memory allocation failed for grayscale data manipulation.");
     }
     
