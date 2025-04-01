@@ -128,6 +128,79 @@ unsigned char* convolve_3x3(
     }
 }
 
+double arr_sum(int size, double* array) {
+    double S = 0;
+    for (int i = 0; i < size; i++) {
+        S += array[i];
+    }
+    return S;
+}
+
+double arr_mean(int size, double* array) {
+    return arr_sum(size, array) / size;
+}
+
+double arr_var(int size, double* probs, double* vals) {
+    double var = 0;
+    double mean = arr_mean(size, vals);
+    for (int i = 0; i < size; i++) {
+        var += probs[i] * pow(vals[i] - mean, 2);
+    }
+    return var;
+}
+
+void otsu_treshold(int size, unsigned char* grayscale) {
+    // create a histogram
+    // MAXGRAY+1 because there are bytes of MAXGRAY value (e.g. 256 values)
+    double histv[MAXSIZE] = {0};
+    double histp[MAXSIZE] = {0};
+    for (int i = 0; i < size; i++) {
+        unsigned char val = grayscale[i];
+        histv[val] += 1;
+    }
+    // normalize to calculate prob.
+    for (int i = 0; i < MAXSIZE; i++) {
+        histp[i] = histv[i] / size;
+    }
+
+    // calculate all possible tresholds
+    double vars[MAXSIZE-2] = {0};
+    for (int i = 0; i < MAXSIZE-2; i++) {
+        int size_b = i+1;
+        int size_f = MAXSIZE-i-1;
+        double* vslice_b = histv;
+        double* vslice_f = histv + size_b;
+        double* pslice_b = histp;
+        double* pslice_f = histp + size_b;
+
+        double var_b = arr_var(size_b, pslice_b, vslice_b);
+        double var_f = arr_var(size_f, pslice_f, vslice_f);
+        double om_b = arr_sum(size_b, pslice_b);
+        double om_f = arr_sum(size_f, pslice_f);
+
+        vars[i] = om_b * var_b + om_f * var_f;
+    }
+
+    // find min. var. threshold
+    double tvar = vars[0];
+    int th = 0;
+    for (int i = 1; i < MAXSIZE-2; i++) {
+        if (tvar > vars[i]) {
+            tvar = vars[i];
+            th = i;
+        }
+    }
+
+    // transform to black and white
+    for (int i = 0; i < size; i++) {
+        if (grayscale[i] > th) {
+            grayscale[i] = 255;
+        } else {
+            grayscale[i] = 0;
+        }
+    }
+}
+
 // args: $1: file to convert, $2: file to save the results to
 int main(int argc, char const *argv[]) {
     if (argc != 3) {
@@ -241,6 +314,8 @@ int main(int argc, char const *argv[]) {
     }
     
     convolve_3x3(width, height, grayscale, new_grayscale, kernel);
+
+    otsu_treshold(size, new_grayscale);
 
     free(grayscale);
     fwrite(new_grayscale, sizeof(unsigned char), size, tgt);
