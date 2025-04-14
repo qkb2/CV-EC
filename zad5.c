@@ -54,6 +54,14 @@ void neon_mul_two_vectors(uint8_t* v1, uint8_t* v2, uint8_t* res) {
     vst1_u8(res, result);
 }
 
+// fallback function
+unsigned char ppm_to_pgm_weighted(Pixel* pixel) {
+    // magic numbers
+    double wr = 0.299, wg = 0.587, wb = 0.114; // weights sum up to 1, no division necessary 
+    double wsum = wr * pixel->r + wg * pixel->g + wb * pixel->b;
+    return wsum;
+}
+
 void neon_weighted_grayscale(int size, Pixel* pixels, uint8_t* grayscale) {
     // weights magic numbers scaled to 8-bit fixed-point (approx.)
     const uint8x8_t wr = vdup_n_u8(77);   // 0.299 * 256 c. 77
@@ -80,7 +88,7 @@ void neon_weighted_grayscale(int size, Pixel* pixels, uint8_t* grayscale) {
     }
 }
 
-void neon_mean_filter( int width, int height, uint8_t* grayscale, uint8_t* new_grayscale) {
+void neon_mean_filter(int width, int height, uint8_t* grayscale, uint8_t* new_grayscale) {
     for (int y = 1; y < height - 1; ++y) {
         for (int x = 1; x < width - 1; ++x) {
             // load 3×3 neighborhood manually
@@ -184,7 +192,7 @@ int main(int argc, char const *argv[]) {
     size_t bytes_read = fread(pixels, sizeof(Pixel), size, src);
     if (bytes_read  != (size_t)(size)) {
         free(pixels);
-        printf("Bytes read %u. Supposed to be %d.", bytes_read, size);
+        printf("Bytes read %d. Supposed to be %d.", (int)bytes_read, size);
         error_handler(src, tgt, "Unexpected end of file (4).");
     }
     fclose(src);
@@ -210,6 +218,7 @@ int main(int argc, char const *argv[]) {
         error_handler(src, tgt, "Memory allocation failed for grayscale data manipulation.");
     }
     
+    // use mean filter
     neon_mean_filter(width, height, grayscale, new_grayscale);
 
     fwrite(new_grayscale, sizeof(uint8_t), size, tgt);
