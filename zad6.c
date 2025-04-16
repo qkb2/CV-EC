@@ -2,7 +2,7 @@
 This program converts P6 PPM file to PBM file. Works for 255 max values.
 Can be compiled normally with GCC with makefile provided.
 Used from cmd: 
-    1st arg is either "d" or "e" for dilation or erosion, respectively,
+    1st arg is either "d", "e" or "n" for dilation, erosion or none, respectively,
     2nd arg is dil./er. strength (int), 
     3rd arg is source file name (opens as rb), 
     4th arg is target file name (opens as wb).
@@ -11,6 +11,7 @@ By Jakub Grabowski
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 
 #define BUFSIZE 256
@@ -111,7 +112,7 @@ unsigned char get_safe_gval(int width, int height, int i, int j, unsigned char* 
     return grayscale[jj * width + ii];
 }
 
-unsigned char* convolve_3x3(
+void convolve_3x3(
     int width, int height, unsigned char* grayscale, unsigned char* new_grayscale, double* kernel) {
     for (int j = 0; j < height; j++) {
         for (int i = 0; i < width; i++) {
@@ -205,6 +206,60 @@ void otsu_treshold(int size, unsigned char* grayscale) {
     }
 }
 
+void dilation(
+    int width, int height, unsigned char* grayscale, unsigned char* new_grayscale, int ksize) {
+    int offset = ksize / 2;
+    for (int j = 0; j < height; j++) {
+        for (int i = 0; i < width; i++) {
+            unsigned char px = grayscale[j * width + i];
+            new_grayscale[j * width + i] = 0;
+            if (px < 128) {
+                continue; // if px is black, skip (nothing to dilate)
+            }
+            for (int jj = 0; jj < ksize; jj++) {
+                for (int ii = 0; ii < ksize; ii++) {
+                    int ni = i + ii - offset;  // offset by kernel center
+                    int nj = j + jj - offset;
+
+                    if (ni >= 0 && ni < width && nj >= 0 && nj < height) {
+                        new_grayscale[nj * width + ni] = MAXGRAY; // make it white
+                    }
+                }
+            }
+        }
+    }
+}
+
+void erosion(
+    int width, int height, unsigned char* grayscale, unsigned char* new_grayscale, int ksize) {
+    int offset = ksize / 2;
+    for (int j = 0; j < height; j++) {
+        for (int i = 0; i < width; i++) {
+            unsigned char px = grayscale[j * width + i];
+            new_grayscale[j * width + i] = 0;
+            if (px < 128) {
+                continue; // if px is black, skip (nothing to erode)
+            }
+            int px_cnt = 0;
+            for (int jj = 0; jj < ksize; jj++) {
+                for (int ii = 0; ii < ksize; ii++) {
+                    int ni = i + ii - offset;  // offset by kernel center
+                    int nj = j + jj - offset;
+
+                    unsigned char gval = get_safe_gval(width, height, ni, nj, grayscale);
+                    if (gval > 127) {
+                        px_cnt++;
+                    }
+                }
+            }
+            // if all px in the nbhd are white, set to white
+            if (px_cnt == ksize * ksize) {
+                new_grayscale[j * width + i] = MAXGRAY;
+            }
+        }
+    }
+}
+
 // args: $1: file to convert, $2: file to save the results to
 int main(int argc, char const *argv[]) {
     if (argc != 5) {
@@ -215,7 +270,7 @@ int main(int argc, char const *argv[]) {
     // option
     char opt = argv[1][0];
     opt = opt | 0x60; // convert to lowercase
-    if (opt != 'd' && opt != 'e') {
+    if (opt != 'd' && opt != 'e' && opt != 'n') {
         printf("Unknown option for the 1st arg.");
         exit(EXIT_FAILURE);
     }
@@ -223,8 +278,8 @@ int main(int argc, char const *argv[]) {
     // strength
     char const * sstr = argv[2];
     char* p_end;
-    long bsize = strtol(sstr, &p_end, 10);
-    if (bsize < 1) {
+    long bs = strtol(sstr, &p_end, 10);
+    if (bs < 1) {
         printf("Strength must be greater than 0.");
         exit(EXIT_FAILURE);
     }
@@ -302,9 +357,9 @@ int main(int argc, char const *argv[]) {
     fclose(src);
 
     // write header to target file
-    fprintf(tgt, "P5\n%d %d\n255\n", width, height);
+    fprintf(tgt, "P4\n%d %d\n", width, height);
 
-    unsigned char* grayscale = (unsigned char*)malloc(size);
+    unsigned char* grayscale = (unsigned char*)malloc(size * sizeof(unsigned char));
     if (!grayscale) {
         free(pixels);
         error_handler(src, tgt, "Memory allocation failed for grayscale data.");
@@ -320,36 +375,50 @@ int main(int argc, char const *argv[]) {
     // transform grayscale with histogram
     histogram_transform(size, grayscale);
     // transform grayscale with gamma correction
-    gamma_transform(size, grayscale, 2.0);
-
-    // example approx. gaussian filter - can be changed to be any other 3x3 kernel
-    double kernel[KSIZE * KSIZE] = {
-        1.0 / 16, 2.0 / 16, 1.0 / 16,
-        2.0 / 16, 4.0 / 16, 2.0 / 16,
-        1.0 / 16, 2.0 / 16, 1.0 / 16
-    };
+    gamma_transform(size, grayscale, 1.1);
     
+    // otsu for black and white img
     otsu_treshold(size, grayscale);
+
+    unsigned char* new_grayscale = (unsigned char*)malloc(size * sizeof(unsigned char));
+    if (!new_grayscale) {
+        free(grayscale);
+        error_handler(src, tgt, "Memory allocation failed for grayscale data manipulation.");
+    }
+
+    // dilate or erode
+    if (opt == 'd') {
+        dilation(width, height, grayscale, new_grayscale, bs);
+    } else if (opt == 'e') {
+        erosion(width, height, grayscale, new_grayscale, bs);
+    } else {
+        memcpy(new_grayscale, grayscale, size * sizeof(unsigned char));
+    }
+    free(grayscale);
 
     // number of bytes is ceil(size/8)
     int byte_size = sizeof(unsigned char);
     int pbm_byte_size = (size + byte_size - 1) / byte_size;
     
-    unsigned char* wbscale = (unsigned char*)malloc(pbm_byte_size);
-    if (!wbscale) {
-        free(grayscale);
-        free(wbscale);
+    // set all bits to zero
+    unsigned char* bwscale = (unsigned char*)calloc(pbm_byte_size, sizeof(unsigned char));
+    if (!bwscale) {
+        free(new_grayscale);
+        free(bwscale);
         error_handler(src, tgt, "Memory allocation failed for grayscale data manipulation.");
     }
 
-    while (1) {
-        
+    // convert to BPM
+    // change bits ~ bytes < 128 to 1s, the rest stays as 0s
+    for (int i = 0; i < size; i++) {
+        if (new_grayscale[i] < 128) {
+            bwscale[i / 8] |= (1 << (7 - (i % 8))); // set bit from left (MSB first)
+        }
     }
-
-    // convert 
-    free(grayscale);
-    fwrite(wbscale, sizeof(unsigned char), pbm_byte_size, tgt);
-    free(wbscale);
+    free(new_grayscale);
+    
+    fwrite(bwscale, sizeof(unsigned char), pbm_byte_size, tgt);
+    free(bwscale);
 
     fclose(tgt);
     printf("File converted successfully.\n");

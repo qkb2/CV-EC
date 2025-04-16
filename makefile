@@ -16,5 +16,8 @@ zad5-run:
 qemu-zad5-run:
 	qemu-aarch64 ./zad5 sample.ppm test.pgm
 
+zad6:
+	gcc zad6.c -o zad6 -lm	
+
 clean:
-	rm zad1 zad5
+	rm zad1 zad5 zad6
